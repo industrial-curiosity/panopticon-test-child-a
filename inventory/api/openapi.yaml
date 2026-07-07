@@ -1,0 +1,175 @@
+openapi: "3.0.3"
+info:
+  title: Inventory API
+  version: "1.0.0"
+  description: REST API for querying and managing product inventory.
+
+paths:
+  /inventory:
+    get:
+      operationId: listInventory
+      summary: List all inventory items
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Paginated list of inventory items
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryList"
+
+  /inventory/{sku}:
+    get:
+      operationId: getInventoryItem
+      summary: Get inventory level for a SKU
+      parameters:
+        - name: sku
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Inventory item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryItem"
+        "404":
+          description: SKU not found
+    put:
+      operationId: updateInventoryItem
+      summary: Set inventory level for a SKU
+      parameters:
+        - name: sku
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InventoryUpdate"
+      responses:
+        "200":
+          description: Updated inventory item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryItem"
+
+  /inventory/reserve:
+    post:
+      operationId: reserveInventory
+      summary: Reserve stock for an order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReservationRequest"
+      responses:
+        "200":
+          description: Reservation confirmed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReservationResult"
+        "409":
+          description: Insufficient stock
+
+  /inventory/release:
+    post:
+      operationId: releaseInventory
+      summary: Release a previously reserved stock hold
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReleaseRequest"
+      responses:
+        "200":
+          description: Hold released
+
+components:
+  schemas:
+    InventoryItem:
+      type: object
+      properties:
+        sku:
+          type: string
+        quantity_available:
+          type: integer
+        quantity_reserved:
+          type: integer
+        updated_at:
+          type: string
+          format: date-time
+      required: [sku, quantity_available, quantity_reserved, updated_at]
+
+    InventoryList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/InventoryItem"
+        total:
+          type: integer
+      required: [items, total]
+
+    InventoryUpdate:
+      type: object
+      properties:
+        quantity_available:
+          type: integer
+      required: [quantity_available]
+
+    ReservationRequest:
+      type: object
+      properties:
+        order_id:
+          type: string
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              sku:
+                type: string
+              quantity:
+                type: integer
+            required: [sku, quantity]
+      required: [order_id, items]
+
+    ReservationResult:
+      type: object
+      properties:
+        reservation_id:
+          type: string
+        order_id:
+          type: string
+        status:
+          type: string
+          enum: [confirmed, partial, failed]
+      required: [reservation_id, order_id, status]
+
+    ReleaseRequest:
+      type: object
+      properties:
+        reservation_id:
+          type: string
+      required: [reservation_id]
