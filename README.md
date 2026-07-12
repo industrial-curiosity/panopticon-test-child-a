@@ -9,10 +9,12 @@ py-inventory-service/
 ├── inventory/
 │   ├── api/
 │   │   ├── openapi.yaml              # REST API contract
-│   │   └── routes.py                 # FastAPI route handlers
+│   │   ├── routes.py                 # FastAPI route handlers
+│   │   └── orders_routes.py          # FastAPI app for an inventory-owned Orders API
 │   ├── clients/
 │   │   ├── orders.py                 # HTTP client for the orders service
-│   │   └── erp.py                    # HTTP client for the warehouse ERP
+│   │   ├── erp.py                    # HTTP client for the warehouse ERP
+│   │   └── order_processing.py       # HTTP client for the order-processing status endpoint
 │   ├── events/
 │   │   └── kafka_consumer.py         # Kafka consumer for order events
 │   ├── queue/
@@ -31,9 +33,10 @@ py-inventory-service/
 | Inventory API | REST | Owned here; consumed by order service |
 | Inventory snapshots | S3 | Internal — audit and recovery snapshots |
 | Fulfillment queue | SQS | Internal — async fulfillment task queue |
-| Orders API | REST | External — consumed from order service |
+| Orders API | REST | Owned here (`orders_routes.py`, in progress) **and** consumed from the order service's existing API (`clients/orders.py`) — an unreconciled ownership dispute over the same interface name |
 | Order events | Kafka | External — consumed from order service |
 | Warehouse ERP | REST | External — third-party on-premise ERP |
+| Order processing status | REST | External — order-processing status endpoint; owner unresolved |
 | Product catalog DB | Postgres | External — managed RDS instance |
 
 ## Environment variables
@@ -42,6 +45,7 @@ py-inventory-service/
 | --- | --- | --- |
 | `ORDERS_API_URL` | `inventory/clients/orders.py` | Base URL for the orders service REST API |
 | `WAREHOUSE_ERP_URL` | `inventory/clients/erp.py` | Base URL for the on-premise warehouse ERP |
+| `ORDER_PROCESSING_URL` | `inventory/clients/order_processing.py` | Base URL for the order-processing status endpoint |
 | `KAFKA_BOOTSTRAP_SERVERS` | `inventory/events/kafka_consumer.py` | Kafka bootstrap server addresses |
 | `FULFILLMENT_QUEUE_URL` | `inventory/queue/fulfillment_queue.py` | SQS queue URL for fulfillment tasks |
 | `INVENTORY_SNAPSHOTS_BUCKET` | `inventory/storage/snapshots.py` | S3 bucket name for daily inventory snapshots |
