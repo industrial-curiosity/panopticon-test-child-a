@@ -4,6 +4,17 @@ Entries record when Panopticon's doc-generation found and resolved drift between
 documentation and the repo's actual current state. Generated file — keep, edit, or discard at
 your own commit step.
 
+## 2026-07-26
+
+- **`inventory/clients/order_processing.py`, `panopticon/index.json`, and generated docs** — the
+  explicit interface hint and index used `order-processing-queue` even though the source only
+  performs HTTP status lookups. Renamed the canonical interface to
+  `order-processing-status` and regenerated `docs/interfaces.md`.
+- **`README.md`, `docs/architecture.md`, component docs, and `py-inventory-service.md`** —
+  documentation asserted ownership, external systems, and an ownership dispute that are not
+  established by the local source or local index. Replaced those claims with source-backed roles
+  and the local index's `null` owner state; refreshed the required architecture links.
+
 ## 2026-07-12
 
 - **`docs/architecture.md`** — the `## Architecture diagram` section required by the current

@@ -1,7 +1,7 @@
 import os
 import httpx
 
-# panopticon-interface order-processing-queue
+# panopticon-interface order-processing-status
 ORDER_PROCESSING_BASE_URL = os.environ["ORDER_PROCESSING_URL"]
 
 

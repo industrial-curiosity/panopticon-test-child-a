@@ -7,4 +7,5 @@ on:
 jobs:
   panopticon:
     uses: industrial-curiosity/panopticon-test/.github/workflows/panopticon-pr-close.yml@main
-    secrets: inherit
+    secrets:
+      instance_token: ${{ secrets.PANOPTICON_INSTANCE_TOKEN }}

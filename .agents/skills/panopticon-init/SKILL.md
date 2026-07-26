@@ -2,15 +2,15 @@
 name: panopticon-init
 description: >-
   Orchestrate Panopticon repo initialization end to end: interface naming, interface extraction,
-  documentation generation, then finalization — in the correct dependency order, resuming from a
-  checkpoint log if a prior run was interrupted. Apply when the user invokes /panopticon-init,
-  right after the bootstrap installer script has printed its prompt, or whenever a full
-  initialization (rather than a single step) is requested.
+  dependency naming, dependency extraction, documentation generation, then finalization — in the
+  correct dependency order, resuming from a checkpoint log if a prior run was interrupted. Apply
+  when the user invokes /panopticon-init, right after the bootstrap installer script has printed
+  its prompt, or whenever a full initialization (rather than a single step) is requested.
 ---
 
 # Panopticon init orchestration
 
-Runs the three Phase 2 skills and the Phase 3 finalization command in the one order that works,
+Runs the five Phase 2 skills and the Phase 3 finalization command in the one order that works,
 tracking progress in a checkpoint log so an interrupted run resumes instead of restarting or
 skipping ahead of its prerequisites. Each underlying step also stays independently invocable on
 its own — this skill only sequences them.
@@ -19,17 +19,24 @@ its own — this skill only sequences them.
 
 1. `panopticon-interface-naming`
 2. `panopticon-interface-extraction` — depends on step 1's naming judgments
-3. `panopticon-doc-generation` — depends on steps 1–2: the interface-docs layer renders from
-   `panopticon/index.json`, which does not exist yet before those steps run
-4. Finalization: `python3 -m panopticon.init_repo --instance <instance>` — the last step, run only
-   after 1–3 are complete
+3. `panopticon-dependency-naming` — depends on step 2: a `panopticon-dependency-of` hint links a
+   dependency entry to an existing interface's canonical name, which requires the interface index
+   built by step 2 to already exist
+4. `panopticon-dependency-extraction` — depends on step 3's naming judgments, mirroring how step 2
+   depends on step 1
+5. `panopticon-doc-generation` — depends on steps 1–4: the interface-docs and dependency-docs
+   layers render from `panopticon/index.json` and the dependency shard, neither of which exist yet
+   before those steps run
+6. Finalization: `python3 -m panopticon.init_repo --instance <instance>` — the last step, run only
+   after 1–5 are complete. Do not ask the user to finalize early: documentation generation derives
+   the bootstrap context it needs before `panopticon/config.json` exists.
 
 ## Checkpoint log
 
 Maintain `panopticon/.init-log.json` — a JSON list of completed step ids, e.g.:
 
 ```json
-["interface-naming", "interface-extraction"]
+["interface-naming", "interface-extraction", "dependency-naming"]
 ```
 
 - **Before** starting a step, read the log (treat a missing file as an empty list) and skip any
@@ -38,10 +45,11 @@ Maintain `panopticon/.init-log.json` — a JSON list of completed step ids, e.g.
   moving to the next step. This is what makes a resumed session (with no memory of the prior one)
   pick up correctly instead of restarting from scratch or skipping into a step whose prerequisites
   were never met.
-- Once all four steps have completed and `panopticon/config.json` exists, **delete**
+- Once all six steps have completed and `panopticon/config.json` exists, **delete**
   `panopticon/.init-log.json`. A completed initialization has no further use for it.
 
-Step ids: `interface-naming`, `interface-extraction`, `doc-generation`, `finalization`.
+Step ids: `interface-naming`, `interface-extraction`, `dependency-naming`, `dependency-extraction`,
+`doc-generation`, `finalization`.
 
 ## Determining the instance slug
 
@@ -54,13 +62,15 @@ instance slug — the bootstrap script already wired this file before printing t
 
 For each step in order, skip it if already recorded in the checkpoint log, otherwise:
 
-1. Run the step (invoke the named skill, or the finalization command for step 4).
+1. Run the step (invoke the named skill, or the finalization command for step 6).
 2. On success, update the checkpoint log.
 3. Continue to the next step.
 
 If finalization reports unmet requirements, fix them (the underlying skills remain invocable
 individually for this), then re-run finalization — do not delete the checkpoint log until
-finalization actually succeeds.
+finalization actually succeeds. A missing `panopticon/config.json` during documentation generation
+is not a reason to pause: continue in the listed order unless the bootstrap caller workflow itself
+is missing or invalid, in which case rerun child bootstrap.
 
 If a step stops to ask the user about a documentation/code contradiction it can't resolve on its
 own (see panopticon-doc-generation's and panopticon-interface-naming's drift-resolution rules),
