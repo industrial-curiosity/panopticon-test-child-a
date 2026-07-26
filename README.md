@@ -1,55 +1,28 @@
 # py-inventory-service
 
-Python inventory and fulfillment service. Manages product stock levels, reserves inventory for orders, and publishes fulfillment tasks.
+[panopticon-test-child-a architecture](docs/architecture.md)
+[org architecture](https://github.com/industrial-curiosity/panopticon-test/blob/main/docs/architecture.md#panopticon-test-child-a)
 
-## Repository structure
-
-```text
-py-inventory-service/
-├── inventory/
-│   ├── api/
-│   │   ├── openapi.yaml              # REST API contract
-│   │   ├── routes.py                 # FastAPI route handlers
-│   │   └── orders_routes.py          # FastAPI app for an inventory-owned Orders API
-│   ├── clients/
-│   │   ├── orders.py                 # HTTP client for the orders service
-│   │   ├── erp.py                    # HTTP client for the warehouse ERP
-│   │   └── order_processing.py       # HTTP client for the order-processing status endpoint
-│   ├── events/
-│   │   └── kafka_consumer.py         # Kafka consumer for order events
-│   ├── queue/
-│   │   └── fulfillment_queue.py      # SQS producer and consumer for fulfillment tasks
-│   ├── storage/
-│   │   └── snapshots.py              # S3 client for daily inventory snapshots
-│   └── db/
-│       └── catalog.py                # PostgreSQL client for the product catalog
-└── pyproject.toml
-```
+Python modules for inventory APIs, upstream clients, order-event consumption, fulfillment tasks,
+snapshot storage, and product-catalog access.
 
 ## Interfaces
 
-| Interface | Type | Direction |
-| --- | --- | --- |
-| Inventory API | REST | Owned here; consumed by order service |
-| Inventory snapshots | S3 | Internal — audit and recovery snapshots |
-| Fulfillment queue | SQS | Internal — async fulfillment task queue |
-| Orders API | REST | Owned here (`orders_routes.py`, in progress) **and** consumed from the order service's existing API (`clients/orders.py`) — an unreconciled ownership dispute over the same interface name |
-| Order events | Kafka | External — consumed from order service |
-| Warehouse ERP | REST | External — third-party on-premise ERP |
-| Order processing status | REST | External — order-processing status endpoint; owner unresolved |
-| Product catalog DB | Postgres | External — managed RDS instance |
+The local Panopticon index documents the inventory REST API, an Orders REST API, a Kafka topic,
+an SQS queue, an S3 bucket, a database, and three REST clients. See
+[the generated interface index](docs/interfaces.md) for the authoritative local view.
 
-## Environment variables
+## Configuration
 
-| Variable | Used by | Description |
-| --- | --- | --- |
-| `ORDERS_API_URL` | `inventory/clients/orders.py` | Base URL for the orders service REST API |
-| `WAREHOUSE_ERP_URL` | `inventory/clients/erp.py` | Base URL for the on-premise warehouse ERP |
-| `ORDER_PROCESSING_URL` | `inventory/clients/order_processing.py` | Base URL for the order-processing status endpoint |
-| `KAFKA_BOOTSTRAP_SERVERS` | `inventory/events/kafka_consumer.py` | Kafka bootstrap server addresses |
-| `FULFILLMENT_QUEUE_URL` | `inventory/queue/fulfillment_queue.py` | SQS queue URL for fulfillment tasks |
-| `INVENTORY_SNAPSHOTS_BUCKET` | `inventory/storage/snapshots.py` | S3 bucket name for daily inventory snapshots |
-| `CATALOG_DB_DSN` | `inventory/db/catalog.py` | PostgreSQL DSN for the product catalog RDS instance |
+| Variable | Used by |
+| --- | --- |
+| `ORDERS_API_URL` | `inventory/clients/orders.py` |
+| `WAREHOUSE_ERP_URL` | `inventory/clients/erp.py` |
+| `ORDER_PROCESSING_URL` | `inventory/clients/order_processing.py` |
+| `KAFKA_BOOTSTRAP_SERVERS` | `inventory/events/kafka_consumer.py` |
+| `FULFILLMENT_QUEUE_URL` | `inventory/queue/fulfillment_queue.py` |
+| `INVENTORY_SNAPSHOTS_BUCKET` | `inventory/storage/snapshots.py` |
+| `CATALOG_DB_DSN` | `inventory/db/catalog.py` |
 
 ## Setup
 

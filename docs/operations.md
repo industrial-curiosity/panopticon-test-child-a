@@ -43,7 +43,7 @@ module), so all variables used by a given entrypoint must be set before it start
 | Variable | Used by | Description |
 | --- | --- | --- |
 | `ORDERS_API_URL` | `inventory/clients/orders.py` | Base URL for the orders service REST API |
-| `WAREHOUSE_ERP_URL` | `inventory/clients/erp.py` | Base URL for the on-premise warehouse ERP |
+| `WAREHOUSE_ERP_URL` | `inventory/clients/erp.py` | Base URL for the warehouse endpoint |
 | `ORDER_PROCESSING_URL` | `inventory/clients/order_processing.py` | Base URL for the order-processing status endpoint |
 | `KAFKA_BOOTSTRAP_SERVERS` | `inventory/events/kafka_consumer.py` | Kafka bootstrap server addresses |
 | `FULFILLMENT_QUEUE_URL` | `inventory/queue/fulfillment_queue.py` | SQS queue URL for fulfillment tasks |
