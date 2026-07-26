@@ -5,7 +5,12 @@
     {
       "schema_version": 1,
       "gating": {"init": "blocking", "doc-drift": "blocking", "interface-conflict": "advisory"},
-      "workflow_ref": "v1"
+      "workflow_ref": "v1",
+      "llm": {
+        "provider": "litellm",
+        "secrets": {"instance_token": "PANOPTICON_INSTANCE_TOKEN"},
+        "variables": {"model": "PANOPTICON_LLM_MODEL"}
+      }
     }
 
 Gating modes are per check type; the defaults above implement the settled gating policy
@@ -15,6 +20,9 @@ Workflows must read these modes rather than hardcoding outcomes. ``workflow_ref`
 When omitted, callers resolve the effective ref themselves (e.g. the instance repo's default
 branch, fetched live) — this module has no network access and so has no way to know that ref
 locally; it reports ``None`` rather than guessing a value like a tag that may not exist.
+The template omits ``llm`` deliberately. General config consumers receive ``None``; provider-dependent
+paths call ``provider_contract`` and fail loudly until the matching provider-specific Configure
+Panopticon workflow persists a valid contract.
 
 **Repo config** — ``panopticon/config.json`` in a child repo: doubles as the initialization flag
 and records repo-level settings:
@@ -46,12 +54,24 @@ are org-declared and open-ended rather than template-declared and fixed:
     {"protected_paths": [".agents/skills/panopticon-doc-generation/SKILL.md"]}
 
 Defaults to an empty list when omitted.
+
+``internal_registries`` (dependency-indexing capability) is an org-declared array of host/URL
+substring strings identifying the org's own private package registry/registries (e.g. an Artifactory
+or Nexus host). A dependency resolved from a manifest against a matching host is treated as internal
+(same-org) rather than third-party. The same field drives both consumer-side detection and
+producer-side self-registration — an org configures its registry identity once, reused in both
+directions:
+
+    {"internal_registries": ["packages.example.com"]}
+
+Defaults to an empty list when omitted, validated the same way as ``protected_paths``.
 """
 
 import json
 from pathlib import Path
 
 from . import SCHEMA_VERSION
+from .providers import resolve_provider_contract
 
 ORG_CONFIG_BASENAME = "panopticon.config.json"
 REPO_CONFIG_PATH = Path("panopticon") / "config.json"
@@ -117,12 +137,26 @@ def load_org_config(instance_root="."):
         isinstance(p, str) and p for p in protected_paths
     ):
         raise ConfigError("org config: 'protected_paths' must be a list of non-empty path strings")
+    internal_registries = doc.get("internal_registries", [])
+    if not isinstance(internal_registries, list) or not all(
+        isinstance(r, str) and r for r in internal_registries
+    ):
+        raise ConfigError("org config: 'internal_registries' must be a list of non-empty host/URL strings")
     return {
         "schema_version": doc.get("schema_version", SCHEMA_VERSION),
         "gating": gating,
         "workflow_ref": doc.get("workflow_ref"),
         "protected_paths": protected_paths,
+        "internal_registries": internal_registries,
+        # Provider selection is deliberately not defaulted. General configuration consumers can
+        # load a new template instance; provider-dependent paths call provider_contract() below.
+        "llm": doc.get("llm"),
     }
+
+
+def provider_contract(org_config):
+    """Resolve and validate the effective provider contract for provider-dependent work."""
+    return resolve_provider_contract(org_config.get("llm"))
 
 
 def gating_mode(org_config, check):

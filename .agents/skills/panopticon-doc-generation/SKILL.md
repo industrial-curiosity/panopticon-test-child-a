@@ -10,7 +10,9 @@ description: >-
 # Panopticon documentation generation
 
 Produce the four documentation layers in the repo's configured documentation location (recorded
-as `docs_location` in `panopticon/config.json`; default `docs/`). Regeneration always updates the
+as `docs_location` in `panopticon/config.json`; default `docs/`). During first-time
+`/panopticon-init`, before finalization writes that file, adopt an existing documentation directory
+or use `docs/`; derive the repository name from the child root. Regeneration always updates the
 existing files **in place** — never create parallel copies, and remove docs and references for
 components that no longer exist.
 
@@ -64,17 +66,44 @@ components that no longer exist.
    depicting this repo's components and how they relate, same "ground every statement in the
    code" discipline as the rest of this layer. Do not invent components or relationships that
    aren't in the code. Directly below the fenced block, add a markdown link back to this repo's
-   section in the org diagram: `` [org diagram](../architecture.md#{repo}) ``, where `{repo}` is
-   `panopticon/config.json`'s `repo` field (e.g. `repo: "svc-a"` → `[org diagram](../architecture.md#svc-a)`).
-   This is a *relative* link, not an absolute GitHub URL — this repo's docs are merged into the
-   instance repo at `docs/{repo}/` on every push (master-sync capability), landing this file at
-   `docs/{repo}/architecture.md` alongside the org diagram at `docs/architecture.md`, so
-   `../architecture.md` resolves correctly there. It will not resolve when viewed directly in this
-   repo before that merge — that's expected: architecture diagrams are reviewed in the instance
-   repo, not by browsing child repos in isolation. No node-level click-through inside the diagram —
-   GitHub's Mermaid renderer does not reliably support `click`-to-URL navigation; the back-link is a
-   plain markdown link, not a diagram directive.
-8. **Resolve drift against docs you find, don't just flag it.** If existing documentation — this
+   section in the org diagram. Run the command below and use its printed URL verbatim:
+
+   ```bash
+   python3 -m panopticon.org_diagram_link
+   ```
+
+   For example, use `[org
+   diagram](https://github.com/acme/panopticon-instance/blob/main/docs/architecture.md#svc-a)`.
+   The URL is absolute so the link works both in this child repository and after its docs are
+   mirrored to `docs/{repo}/` in the instance repository. Do not re-derive the URL or write a
+   relative link to the org diagram. When refreshing an existing architecture overview, replace
+   any legacy relative org-diagram back-link with this resolver-produced absolute URL. Links between
+   documents within this child documentation tree remain relative to the document that contains them.
+   No node-level click-through inside the
+   diagram — GitHub's Mermaid renderer does not reliably support `click`-to-URL navigation; the
+   back-link is a plain markdown link, not a diagram directive.
+8. **Write the README architecture links.** At the top of `README.md`, write or refresh two markdown
+   links, own-repo diagram directly above the org diagram, both labeled with the repo name (never a
+   bare "architecture" — ambiguous once two links sit stacked):
+
+   ```markdown
+   [{repo} architecture]({docs_location}/architecture.md)
+   [org architecture](<output of the command below>)
+   ```
+
+   The first is a relative link built from `panopticon/config.json`'s `repo` and `docs_location`
+   fields, or their first-time initialization derivation, and resolves in this child repository.
+   The second is a fully-qualified GitHub URL — run:
+
+   ```bash
+   python3 -m panopticon.org_diagram_link
+   ```
+
+   and use its printed line verbatim. Do not re-derive the URL or its fallback behavior yourself: the
+   script already implements config-first, bootstrap-context fallback, and fail-loudly-never-guess
+   logic (architecture-diagrams capability, "Org-diagram link script"). If the script exits non-zero,
+   stop and report the error it printed rather than writing a partial or guessed link.
+9. **Resolve drift against docs you find, don't just flag it.** If existing documentation — this
    repo's own docs, or a reference/fixture doc committed elsewhere in the repo — describes code,
    configuration, or interfaces that no longer match the repo's actual current state, revise the
    documentation to match reality rather than leaving it stale or merely noting the mismatch in a
