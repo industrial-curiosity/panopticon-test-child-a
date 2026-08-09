@@ -35,33 +35,94 @@ import urllib.request
 from pathlib import Path
 
 from . import SCHEMA_VERSION
-from .callers import CALLER_WORKFLOWS, caller_workflow_text as shared_caller_workflow_text
+from .callers import (
+    CALLER_WORKFLOWS,
+    caller_compatibility_revision as local_callers_compatibility_revision,
+    caller_workflow_text as shared_caller_workflow_text,
+)
 from .providers import ProviderConfigError, resolve_provider_contract
-from .recovery import child_bootstrap_command, configuration_recovery
+from .recovery import (
+    child_bootstrap_command,
+    configuration_recovery,
+    credential_action_recovery,
+)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 DEFAULT_BRANCH = "main"
 SKILLS_PREFIX = ".agents/skills/"
+LOCAL_TOOLING_MANIFEST_PATH = "panopticon/local-tooling.json"
+LOCAL_TOOLING_MANIFEST_SCHEMA_VERSION = 1
 # ── Workflow generation ───────────────────────────────────────────────────────
 
 caller_workflow_text = shared_caller_workflow_text
 
 
-def wire_workflows(instance, ref, contract, child_root=".", default_branch=DEFAULT_BRANCH):
+def wire_workflows(instance, ref, contract, child_root=".", default_branch=DEFAULT_BRANCH,
+                   caller_workflows=CALLER_WORKFLOWS,
+                   caller_workflow_renderer=shared_caller_workflow_text,
+                   rendered_workflows=None):
     """Write/refresh the managed child caller workflows in place; returns their paths."""
     workflows_dir = Path(child_root) / ".github" / "workflows"
     workflows_dir.mkdir(parents=True, exist_ok=True)
     written = []
-    total = len(CALLER_WORKFLOWS)
-    for i, name in enumerate(CALLER_WORKFLOWS, start=1):
+    total = len(caller_workflows)
+    if rendered_workflows is None:
+        rendered_workflows = {
+            name: caller_workflow_renderer(name, instance, ref, contract, default_branch)
+            for name in caller_workflows
+        }
+    for i, name in enumerate(caller_workflows, start=1):
         path = workflows_dir / name
-        path.write_text(
-            shared_caller_workflow_text(name, instance, ref, contract, default_branch), encoding="utf-8"
-        )
+        path.write_text(rendered_workflows[name], encoding="utf-8")
         written.append(path)
         print(f"  [{i}/{total}] {name}")
     return written
+
+
+def _caller_renderer(source):
+    namespace = {"__name__": "panopticon.callers_preview"}
+    exec(compile(source, "panopticon/callers.py", "exec"), namespace)
+    try:
+        caller_workflows = namespace["CALLER_WORKFLOWS"]
+        caller_workflow_renderer = namespace["caller_workflow_text"]
+        compatibility_revision = namespace["caller_compatibility_revision"]
+    except KeyError as exc:
+        raise RuntimeError(f"instance caller renderer is missing {exc.args[0]}") from exc
+    if not callable(compatibility_revision):
+        raise RuntimeError(
+            "instance caller renderer does not export callable "
+            "caller_compatibility_revision"
+        )
+    return caller_workflows, caller_workflow_renderer, compatibility_revision
+
+
+class CallerRendererError(RuntimeError):
+    """The fetched caller renderer could not provide a safe managed render."""
+
+
+def _guard_caller_compatibility_revision(compatibility_revision):
+    def guarded(contract):
+        try:
+            return compatibility_revision(contract)
+        except Exception as exc:
+            raise CallerRendererError(
+                f"caller compatibility revision failed: {exc}"
+            ) from exc
+
+    return guarded
+
+
+def _render_caller_workflows(
+    caller_workflows, renderer, instance, ref, contract, default_branch
+):
+    rendered = {}
+    try:
+        for name in caller_workflows:
+            rendered[name] = renderer(name, instance, ref, contract, default_branch)
+    except Exception as exc:
+        raise CallerRendererError(f"caller workflow rendering failed: {exc}") from exc
+    return rendered
 
 # ── GitHub API helpers ────────────────────────────────────────────────────────
 
@@ -75,6 +136,18 @@ def _api_headers(token=None):
 # Gateway/server failures retry with normal backoff. A `403` only retries when GitHub identifies
 # it as a rate limit; other forbidden responses remain actionable permission failures.
 _RETRYABLE_STATUS = {500, 502, 503, 504}
+
+
+class _GitHubAPIHTTPError(RuntimeError):
+    """A GitHub HTTP failure whose status must remain visible at callers."""
+
+    def __init__(self, status, message):
+        super().__init__(message)
+        self.status = status
+
+
+class _GitHubAPINetworkError(RuntimeError):
+    """A GitHub request that exhausted connection-level retries."""
 
 
 def _rate_limit_delay(status, headers, body, now, fallback):
@@ -108,12 +181,14 @@ def _api_get(url, token=None, urlopen=urllib.request.urlopen, max_attempts=3, sl
              now=time.time, print_fn=print):
     req = urllib.request.Request(url, headers=_api_headers(token))
     last_error = None
+    last_http_status = None
     for attempt in range(1, max_attempts + 1):
         rate_limited = False
         try:
             with urlopen(req, timeout=30) as resp:
                 return json.loads(resp.read())
         except urllib.error.HTTPError as exc:
+            last_http_status = exc.code
             headers = exc.headers
             with exc:
                 body = exc.read().decode("utf-8", "replace")[:400]
@@ -121,18 +196,21 @@ def _api_get(url, token=None, urlopen=urllib.request.urlopen, max_attempts=3, sl
             fallback = 2 ** (attempt - 1)
             delay = _rate_limit_delay(exc.code, headers, body, now, fallback)
             if delay is None and exc.code not in _RETRYABLE_STATUS:
-                raise RuntimeError(last_error)
+                raise _GitHubAPIHTTPError(exc.code, last_error)
             rate_limited = delay is not None
             if not rate_limited:
                 delay = fallback
         except urllib.error.URLError as exc:
+            last_http_status = None
             last_error = f"GitHub API request failed for {url}: {exc.reason}"
             delay = 2 ** (attempt - 1)
         if attempt < max_attempts:
             if rate_limited:
                 print_fn(f"  GitHub API rate limited; retrying in {int(delay + 0.999)} seconds...")
             sleep(delay)
-    raise RuntimeError(last_error)
+    if last_http_status is None:
+        raise _GitHubAPINetworkError(last_error)
+    raise _GitHubAPIHTTPError(last_http_status, last_error)
 
 
 def _fetch_tree(owner, repo, ref, token=None, urlopen=urllib.request.urlopen):
@@ -229,10 +307,16 @@ def validate_provider_workflow(tree, contract, instance, ref):
         )
     credential_action = contract.get("credential_action")
     if credential_action and credential_action not in paths:
+        recovery = credential_action_recovery(
+            instance,
+            "this child repository",
+            action_path=credential_action,
+        )
         raise RuntimeError(
             f"configured provider {contract['provider']!r} requires the instance-managed "
             f"credential action {credential_action}, but it is absent from {instance}@{ref}; "
-            "add the action or select github-oidc, then rerun child bootstrap"
+            "add the action or select github-oidc, then rerun child bootstrap\n\n"
+            f"{recovery}"
         )
 
 # ── instance_default_branch refresh (tooling-currency capability) ──────────────
@@ -317,23 +401,53 @@ def download_skills(owner, repo, ref, tree, token=None, child_root=".", dest_loc
 # tooling_currency.py, parsers/) is used only by the reusable GitHub Actions workflows that check
 # out the instance repo directly, and has no role in local Phase 2/3 work — it SHALL NOT be
 # vendored into child repos. `recovery.py` is the exception because current workflows use it before
-# checking out the instance repository.
-LOCAL_TOOLING_MODULES = (
-    "__init__.py", "callers.py", "config.py", "providers.py", "dependencies.py", "docs.py", "index.py",
-    "init_repo.py", "sync.py", "org_diagram_link.py", "recovery.py",
-)
+# checking out the instance repository. The explicit subset is declared in
+def _local_tooling_modules(source):
+    """Validate and return the instance-owned local-tooling module names."""
+    try:
+        manifest = json.loads(source)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"invalid JSON: {exc}") from exc
+    if not isinstance(manifest, dict) or set(manifest) != {"schema_version", "modules"}:
+        raise RuntimeError("must contain exactly schema_version and modules")
+    if (
+        type(manifest["schema_version"]) is not int
+        or manifest["schema_version"] != LOCAL_TOOLING_MANIFEST_SCHEMA_VERSION
+    ):
+        raise RuntimeError(
+            f"unsupported schema_version {manifest['schema_version']!r}; expected "
+            f"{LOCAL_TOOLING_MANIFEST_SCHEMA_VERSION}"
+        )
+    modules = manifest["modules"]
+    if not isinstance(modules, list) or not modules:
+        raise RuntimeError("modules must be a non-empty array")
+    if len(set(modules)) != len(modules):
+        raise RuntimeError("modules must not contain duplicates")
+    if not all(
+        isinstance(name, str)
+        and name.endswith(".py")
+        and "/" not in name
+        and "\\" not in name
+        and name not in {".", ".."}
+        for name in modules
+    ):
+        raise RuntimeError("modules must contain only flat .py filenames")
+    return tuple(modules)
 
 
 def download_local_tooling(owner, repo, ref, token=None, child_root=".",
                            urlopen=urllib.request.urlopen):
-    """Vendor LOCAL_TOOLING_MODULES into the child repo's panopticon/ directory, so
-    `python3 -m panopticon.docs` / `python3 -m panopticon.init_repo` work immediately after
-    bootstrap with no instance-repo clone or PYTHONPATH setup. Idempotent: overwrites in place."""
+    """Stage selected instance tooling before writing it into the child repository."""
+    manifest = _fetch_file_bytes(owner, repo, LOCAL_TOOLING_MANIFEST_PATH, ref, token, urlopen)
+    modules = _local_tooling_modules(manifest)
+    staged = [
+        (name, _fetch_file_bytes(owner, repo, f"panopticon/{name}", ref, token, urlopen))
+        for name in modules
+    ]
     dest_dir = Path(child_root) / "panopticon"
     dest_dir.mkdir(parents=True, exist_ok=True)
-    total = len(LOCAL_TOOLING_MODULES)
-    for i, name in enumerate(LOCAL_TOOLING_MODULES, start=1):
-        content = _fetch_file_bytes(owner, repo, f"panopticon/{name}", ref, token, urlopen)
+    total = len(staged)
+    for i, (name, content) in enumerate(staged, start=1):
         (dest_dir / name).write_bytes(content)
         print(f"  [{i}/{total}] {name}")
     return total
@@ -367,7 +481,29 @@ def download_getting_started_guide(owner, repo, ref, token=None, child_root=".",
 # ── Prerequisite check ────────────────────────────────────────────────────────
 
 def _required_actions_names(contract):
-    return tuple(contract["secrets"].values()), tuple(contract["variables"].values())
+    required_variables = (
+        configured_name
+        for logical, configured_name in contract["variables"].items()
+        if logical not in contract["optional_variables"]
+    )
+    return tuple(contract["secrets"].values()), tuple(required_variables)
+
+
+def _optional_value_status(contract):
+    """Return source-safe status lines for optional provider values."""
+    status = []
+    for logical in contract["optional_variables"]:
+        configured_name = contract["variables"][logical]
+        if logical == "model":
+            source = "organization variable or instance config"
+        elif logical == "job_timeout_minutes":
+            source = "workflow default in reusable workflow"
+        elif logical in contract["defaults"]:
+            source = "instance config (organization variable takes precedence)"
+        else:
+            source = "workflow default (the fixed instance action can override it in CI)"
+        status.append(f"    optional {configured_name} ({logical}): {source}")
+    return status
 
 
 def manual_verification_steps(org, contract):
@@ -383,6 +519,7 @@ def manual_verification_steps(org, contract):
         "variables can't be checked automatically. Verify manually that these are configured:",
         f"    secrets:   {', '.join(secrets)}",
         f"    variables: {', '.join(variables)}",
+        *_optional_value_status(contract),
         "",
         "  Web UI:",
         f"    {settings_url}",
@@ -422,7 +559,16 @@ def check_prerequisites(org, contract, token=None, urlopen=urllib.request.urlope
 
     _check("secrets", "secrets", secrets, "secret")
     _check("variables", "variables", variables, "variable")
+    report.extend(_optional_value_status(contract))
     return report
+
+
+def _has_required_prerequisite_problem(report):
+    """Whether a prerequisite report contains a missing or unverifiable required value."""
+    return any(
+        line.lstrip().startswith(("missing org-level", "could not verify org"))
+        for line in report
+    )
 
 # ── Skills location selection ───────────────────────────────────────────────────
 # The bootstrap script prompts for the skills location itself — even when piped via
@@ -690,13 +836,78 @@ def main(env=None, child_root=".", prompt_fn=None, urlopen=urllib.request.urlope
     ref = org_config.get("workflow_ref", default_branch)
     print(f"  workflow_ref: {ref}")
 
+    # Retrieval is the only renderer failure with a safe local substitute; fetched source that
+    # exists but is invalid must still stop before any managed child writes.
     try:
-        contract = resolve_provider_contract(org_config.get("llm"))
+        caller_source = _fetch_file_bytes(
+            owner, repo, "panopticon/callers.py", ref, token, urlopen
+        )
+    # Only a missing renderer or a connection failure may use bundled code; auth and API errors
+    # must surface because the bundled renderer may not match the selected workflow_ref.
+    except _GitHubAPIHTTPError as exc:
+        if exc.status != 404:
+            print(f"\n  error: could not load instance caller renderer: {exc}\n")
+            return 1
+        print(f"  using bundled caller renderer (fallback): {exc}")
+        caller_workflows, caller_workflow_renderer, compatibility_revision = (
+            CALLER_WORKFLOWS,
+            shared_caller_workflow_text,
+            local_callers_compatibility_revision,
+        )
+    except _GitHubAPINetworkError as exc:
+        print(f"  using bundled caller renderer (fallback): {exc}")
+        caller_workflows, caller_workflow_renderer, compatibility_revision = (
+            CALLER_WORKFLOWS,
+            shared_caller_workflow_text,
+            local_callers_compatibility_revision,
+        )
+    except RuntimeError as exc:
+        if str(exc).startswith("Unexpected file encoding"):
+            print(f"\n  error: could not load instance caller renderer: {exc}\n")
+            return 1
+        print(f"\n  error: could not load instance caller renderer: {exc}\n")
+        return 1
+    except Exception as exc:
+        print(f"\n  error: could not load instance caller renderer: {exc}\n")
+        return 1
+    else:
+        try:
+            caller_workflows, caller_workflow_renderer, compatibility_revision = _caller_renderer(
+                caller_source
+            )
+        except Exception as exc:
+            print(f"\n  error: could not load instance caller renderer: {exc}\n")
+            print(
+                "  After syncing/fixing the instance, rerun this from inside the child clone:\n"
+                f"    {child_bootstrap_command(instance)}\n"
+                "  Review and commit generated changes, push them, then rerun or await CI."
+            )
+            return 1
+
+    compatibility_revision = _guard_caller_compatibility_revision(compatibility_revision)
+    try:
+        contract = resolve_provider_contract(org_config.get("llm"), compatibility_revision)
     except ProviderConfigError as exc:
         print(f"\n  error: {exc}\n")
         print(provider_remediation(instance, default_branch))
         return 1
+    except CallerRendererError as exc:
+        print(f"\n  error: could not load instance caller renderer: {exc}\n")
+        return 1
     print(f"  llm provider: {contract['provider']}")
+
+    try:
+        rendered_workflows = _render_caller_workflows(
+            caller_workflows,
+            caller_workflow_renderer,
+            instance,
+            ref,
+            contract,
+            default_branch,
+        )
+    except CallerRendererError as exc:
+        print(f"\n  error: could not load instance caller renderer: {exc}\n")
+        return 1
 
     # Validate the selected trusted workflow at its effective ref before prompts or child writes.
     try:
@@ -734,7 +945,7 @@ def main(env=None, child_root=".", prompt_fn=None, urlopen=urllib.request.urlope
     # panopticon.init_repo need this to work with no instance-repo clone or PYTHONPATH setup).
     print("\nVendoring local Python tooling...")
     try:
-        n_modules = download_local_tooling(owner, repo, default_branch, token, child_root, urlopen)
+        n_modules = download_local_tooling(owner, repo, ref, token, child_root, urlopen)
         print(f"  {n_modules} module(s) installed → panopticon/")
     except RuntimeError as exc:
         print(f"  error: {exc}")
@@ -753,8 +964,12 @@ def main(env=None, child_root=".", prompt_fn=None, urlopen=urllib.request.urlope
 
     # Wire workflows.
     print("\nWiring GitHub Actions workflows...")
-    wire_workflows(instance, ref, contract, child_root, default_branch)
-    print(f"  {len(CALLER_WORKFLOWS)} workflow(s) written → .github/workflows/")
+    # Use the previewed renderer output so no callback can fail after managed writes begin.
+    wire_workflows(
+        instance, ref, contract, child_root, default_branch, caller_workflows,
+        caller_workflow_renderer, rendered_workflows,
+    )
+    print(f"  {len(caller_workflows)} workflow(s) written → .github/workflows/")
 
     # Refresh instance_default_branch in an already-existing panopticon/config.json (never creates
     # it — that stays finalization's job alone). No-op, silently, on a first-time bootstrap.
@@ -771,10 +986,13 @@ def main(env=None, child_root=".", prompt_fn=None, urlopen=urllib.request.urlope
     elif issues:
         for issue in issues:
             print(issue)
-        print(
-            "\n  See the setup guide in the instance repo for configuration instructions.\n"
-            "  Missing items will not block initialization — fix before the first PR."
-        )
+        if _has_required_prerequisite_problem(issues):
+            print(
+                "\n  See the setup guide in the instance repo for configuration instructions.\n"
+                "  Missing items will not block initialization — fix before the first PR."
+            )
+        else:
+            print("  All required org-level secrets and variables are configured.")
     else:
         print("  All org-level secrets and variables are configured.")
 

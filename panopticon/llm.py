@@ -152,7 +152,8 @@ class LiteLLMAdapter:
     """OpenAI-compatible HTTP transport; shared prompting and correction stay in LLMClient."""
 
     def __init__(self, endpoint, api_key, model=DEFAULT_MODEL, timeout=DEFAULT_TIMEOUT_SECONDS,
-                 max_attempts=DEFAULT_MAX_ATTEMPTS, sleep=time.sleep, provider="litellm"):
+                 max_attempts=DEFAULT_MAX_ATTEMPTS, sleep=time.sleep, provider="litellm",
+                 urlopen=urllib.request.urlopen):
         missing = [name for name, value in ((ENDPOINT_VAR, endpoint), (API_KEY_VAR, api_key)) if not value]
         if missing:
             raise MissingRequirementError(missing, PURPOSES)
@@ -166,6 +167,7 @@ class LiteLLMAdapter:
         self.max_attempts = max_attempts
         self._sleep = sleep
         self.provider = provider
+        self._urlopen = urlopen
 
     def preflight(self):
         return {"provider": self.provider, "endpoint": self.endpoint, "model": self.model}
@@ -186,7 +188,7 @@ class LiteLLMAdapter:
                 method="POST",
             )
             try:
-                with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                with self._urlopen(request, timeout=self.timeout) as response:
                     return self._parse_response(response.read())
             except urllib.error.HTTPError as exc:
                 with exc:
@@ -219,9 +221,10 @@ class LLMClient:
     def __init__(self, endpoint, api_key, model=DEFAULT_MODEL, timeout=DEFAULT_TIMEOUT_SECONDS,
                  max_attempts=DEFAULT_MAX_ATTEMPTS,
                  max_correction_attempts=DEFAULT_MAX_CORRECTION_ATTEMPTS, sleep=time.sleep,
-                 provider="litellm"):
+                 provider="litellm", urlopen=urllib.request.urlopen):
         self._adapter = LiteLLMAdapter(
-            endpoint, api_key, model, timeout, max_attempts, sleep, provider=provider
+            endpoint, api_key, model, timeout, max_attempts, sleep, provider=provider,
+            urlopen=urlopen,
         )
         self.endpoint = self._adapter.endpoint
         self.api_key = self._adapter.api_key
@@ -427,6 +430,9 @@ class BedrockLLMClient(LLMClient):
         return response.get("Error", {}).get("Code") or type(exc).__name__
 
     def chat(self, messages, temperature=0):
+        # Preserve the provider-neutral adapter interface, but do not send an
+        # unconfirmed optional field to Bedrock Converse.
+        del temperature
         runtime = self._load_runtime()
         system, conversation = self._messages_for_converse(messages)
         resource = f"bedrock://{self.region}/{self.model}"
@@ -435,7 +441,6 @@ class BedrockLLMClient(LLMClient):
             request = {
                 "modelId": self.model,
                 "messages": conversation,
-                "inferenceConfig": {"temperature": temperature},
             }
             if system:
                 request["system"] = system
