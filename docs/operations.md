@@ -1,5 +1,20 @@
 # panopticon-test-child-a — operations
 
+<!-- panopticon-analysis-scope:start -->
+## Panopticon analysis scope
+
+Panopticon excludes illustrative material from interface, dependency, and doc-drift analysis.
+
+### Excluded directories currently in this repository
+
+- None currently detected.
+
+Directories whose exact path component is one of `examples`, `samples`, `fixtures`, `testdata`, `demos`, `scaffolding`, `demo`, `scaffold` are excluded case-insensitively.
+Similar production paths, such as `src/sample-service`, remain in scope.
+
+Use `panopticon-ignore file` in one of a file's first five nonblank lines to exclude the whole file. Use `panopticon-ignore declaration` on a declaration line or the line immediately before it to exclude only that declaration.
+<!-- panopticon-analysis-scope:end -->
+
 ## Running locally
 
 Prerequisites: Python 3.11+.
