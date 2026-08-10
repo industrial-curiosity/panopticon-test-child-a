@@ -1,6 +1,7 @@
 import os
 from confluent_kafka import Consumer, KafkaError
 
+# panopticon-interface order-events
 TOPIC = "order-events"
 
 KAFKA_BOOTSTRAP_SERVERS = os.environ["KAFKA_BOOTSTRAP_SERVERS"]
