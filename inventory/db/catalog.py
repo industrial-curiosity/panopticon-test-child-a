@@ -2,6 +2,7 @@ import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
+# panopticon-interface product-catalog-db
 DSN = os.environ["CATALOG_DB_DSN"]
 
 
