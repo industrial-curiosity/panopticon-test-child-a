@@ -1,7 +1,6 @@
 import os
 import httpx
 
-# panopticon-interface orders-api
 ORDERS_BASE_URL = os.environ["ORDERS_API_URL"]
 
 

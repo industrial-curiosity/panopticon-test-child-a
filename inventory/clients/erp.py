@@ -1,7 +1,6 @@
 import os
 import httpx
 
-# panopticon-interface warehouse-erp
 ERP_BASE_URL = os.environ["WAREHOUSE_ERP_URL"]
 
 

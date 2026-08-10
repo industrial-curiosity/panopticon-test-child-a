@@ -1,6 +1,5 @@
 from fastapi import FastAPI
 
-# panopticon-interface orders-api
 app = FastAPI(title="Orders API (inventory-owned)", version="0.1.0")
 
 

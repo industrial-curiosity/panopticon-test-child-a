@@ -2,7 +2,6 @@ import json
 import os
 import boto3
 
-# panopticon-interface fulfillment-queue
 QUEUE_URL = os.environ["FULFILLMENT_QUEUE_URL"]
 
 _sqs = boto3.client("sqs")

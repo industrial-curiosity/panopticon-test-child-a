@@ -3,7 +3,6 @@ import os
 from datetime import date
 import boto3
 
-# panopticon-interface inventory-snapshots
 SNAPSHOTS_BUCKET = os.environ["INVENTORY_SNAPSHOTS_BUCKET"]
 
 _s3 = boto3.client("s3")
