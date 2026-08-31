@@ -1,3 +1,7 @@
+---
+type: component
+---
+
 # panopticon-test-child-a — architecture overview
 
 ## Purpose
@@ -36,7 +40,7 @@ flowchart LR
 ```
 
 [Panopticon analysis scope](operations.md#panopticon-analysis-scope)
-[org diagram](https://github.com/industrial-curiosity/panopticon-demo/blob/main/docs/architecture.md#panopticon-test-child-a)
+[org diagram](https://github.com/industrial-curiosity/panopticon-test/blob/main/docs/architecture.md#panopticon-test-child-a)
 
 ## Data flow
 
