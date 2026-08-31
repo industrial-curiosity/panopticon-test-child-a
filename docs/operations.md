@@ -1,3 +1,7 @@
+---
+type: component
+---
+
 # panopticon-test-child-a — operations
 
 <!-- panopticon-analysis-scope:start -->
